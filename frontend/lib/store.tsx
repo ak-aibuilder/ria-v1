@@ -140,7 +140,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9), lastActivity: Date.now() });
   };
 
-  if (!isLoaded) return null; // Or a loading spinner
+  // Prevent hydration mismatch by not rendering until loaded
+  if (!isLoaded) {
+    return null;
+  }
 
   return (
     <AppContext.Provider value={{ state, setPhase, setProducts, setScoredProducts, setEnrichedProducts, addTranscript, resetSession }}>
