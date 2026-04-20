@@ -91,7 +91,7 @@ const initialState: AppState = {
   enrichedProducts: [],
   transcripts: [],
   sessionId: '',
-  lastActivity: Date.now(),
+  lastActivity: 0,
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -111,13 +111,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           setState(parsed);
         } else {
           sessionStorage.removeItem('ria_session');
-          setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9) });
+          setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9), lastActivity: Date.now() });
         }
       } catch (e) {
         console.error("Failed to parse session", e);
       }
     } else {
-      setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9) });
+      setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9), lastActivity: Date.now() });
     }
     setIsLoaded(true);
   }, []);
@@ -137,7 +137,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const addTranscript = (transcript: AgentTranscript) => setState(s => ({ ...s, transcripts: [...s.transcripts, transcript] }));
   const resetSession = () => {
     sessionStorage.removeItem('ria_session');
-    setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9) });
+    setState({ ...initialState, sessionId: Math.random().toString(36).substring(2, 9), lastActivity: Date.now() });
   };
 
   if (!isLoaded) return null; // Or a loading spinner
