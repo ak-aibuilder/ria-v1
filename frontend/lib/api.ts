@@ -52,3 +52,11 @@ export async function uploadCatalog<T>(
   fd.append("dedupe_strategy", dedupeStrategy);
   return apiFetch<T>("/catalog/upload", { method: "POST", body: fd });
 }
+
+export async function runAudit<T>(): Promise<T> {
+  return apiFetch<T>("/audit/run", { method: "POST" });
+}
+
+export async function rescoreProduct<T>(sku: string): Promise<T> {
+  return apiFetch<T>(`/audit/rescore/${encodeURIComponent(sku)}`, { method: "POST" });
+}

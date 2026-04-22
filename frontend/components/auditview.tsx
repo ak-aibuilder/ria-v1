@@ -1,79 +1,42 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { useAppStore, ScoredProduct, Gap } from '../lib/store';
-import { AlertTriangle, CheckCircle, Info, Sparkles, ArrowRight, BarChart3 } from 'lucide-react';
-
-// Mock scoring logic
-const generateMockScores = (products: any[]): ScoredProduct[] => {
-  return products.map(p => {
-    // Base scores on what data is present
-    const hasDesc = p.description && p.description.length > 20;
-    const hasCategory = !!p.category;
-    const hasBrand = !!p.brand;
-
-    const d1 = hasCategory && hasBrand ? 7.5 : 4.0; // Structured Attributes
-    const d2 = hasDesc ? 6.5 : 3.0; // Description
-    const d3 = 2.0; // Q&A (usually missing)
-    const d4 = 3.5; // Reviews (usually missing or sparse)
-    const d5 = 4.0; // Relationships (usually missing)
-    const d6 = 2.5; // Agent Facets (usually missing)
-
-    // Add some randomness for realism
-    const randomize = (base: number) => Math.max(1, Math.min(10, base + (Math.random() * 2 - 1)));
-
-    const scores = {
-      D1: randomize(d1),
-      D2: randomize(d2),
-      D3: randomize(d3),
-      D4: randomize(d4),
-      D5: randomize(d5),
-      D6: randomize(d6),
-    };
-
-    const readiness_score = (
-      scores.D1 * 0.25 +
-      scores.D2 * 0.15 +
-      scores.D3 * 0.20 +
-      scores.D4 * 0.10 +
-      scores.D5 * 0.15 +
-      scores.D6 * 0.15
-    );
-
-    const gaps: Gap[] = [];
-    if (scores.D1 < 6) gaps.push({ dimension: 'D1', severity: 'high', reason: 'Missing structured attributes (brand, category, material)' });
-    if (scores.D2 < 6) gaps.push({ dimension: 'D2', severity: 'medium', reason: 'Description is too short or lacks detail for agent reasoning' });
-    if (scores.D3 < 6) gaps.push({ dimension: 'D3', severity: 'high', reason: 'No conversational Q&A pairs available' });
-    if (scores.D5 < 6) gaps.push({ dimension: 'D5', severity: 'medium', reason: 'Missing product relationships (complements, alternatives)' });
-    if (scores.D6 < 6) gaps.push({ dimension: 'D6', severity: 'high', reason: 'Missing agent-actionable facets (e.g., "good for winter", "waterproof")' });
-
-    return {
-      sku: p.sku,
-      readiness_score,
-      dimension_scores: scores,
-      gaps
-    };
-  });
-};
+import { useAppStore, ScoredProduct } from '../lib/store';
+import { runAudit } from '../lib/api';
+import { AlertTriangle, CheckCircle, Sparkles, ArrowRight, BarChart3 } from 'lucide-react';
 
 export default function AuditView() {
   const { state, setScoredProducts, setPhase } = useAppStore();
-  const [isScoring, setIsScoring] = useState(true);
+  const [isScoring, setIsScoring] = useState(state.scoredProducts.length === 0);
+  const [error, setError] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<ScoredProduct | null>(null);
 
   useEffect(() => {
-    if (state.scoredProducts.length === 0 && state.products.length > 0) {
-      // Simulate API delay
-      const timer = setTimeout(() => {
-        const scores = generateMockScores(state.products);
-        setScoredProducts(scores);
-        setIsScoring(false);
-      }, 2000);
-      return () => clearTimeout(timer);
-    } else if (state.scoredProducts.length > 0) {
+    let cancelled = false;
+    if (state.scoredProducts.length > 0) {
       setIsScoring(false);
+      return;
     }
-  }, [state.products, state.scoredProducts.length, setScoredProducts]);
+    if (state.products.length === 0) {
+      setIsScoring(false);
+      return;
+    }
+    setIsScoring(true);
+    setError(null);
+    (async () => {
+      try {
+        const res = await runAudit<{ scored_products: ScoredProduct[] }>();
+        if (cancelled) return;
+        setScoredProducts(res.scored_products);
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Audit failed");
+      } finally {
+        if (!cancelled) setIsScoring(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [state.products.length, state.scoredProducts.length, setScoredProducts]);
 
   if (isScoring) {
     return (
@@ -87,6 +50,18 @@ export default function AuditView() {
         </div>
         <h3 className="text-2xl font-bold mb-2">Auditing Catalog</h3>
         <p className="text-white/60">Analyzing {state.products.length} products against UCP/ACP standards...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-md mx-auto py-20 text-center">
+        <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400">
+          <AlertTriangle className="w-8 h-8 mx-auto mb-4" />
+          <h3 className="text-xl font-semibold mb-2">Audit failed</h3>
+          <p className="text-sm">{error}</p>
+        </div>
       </div>
     );
   }
