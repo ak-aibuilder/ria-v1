@@ -2,124 +2,78 @@
 
 import React, { useState, useRef } from 'react';
 import { useAppStore, Product } from '../lib/store';
+import { uploadCatalog } from '../lib/api';
 import { UploadCloud, FileText, AlertCircle, CheckCircle2, ArrowRight, AlertTriangle, Merge, Trash2 } from 'lucide-react';
 
-function parseCSV(str: string) {
-  const arr: string[][] = [];
-  let quote = false;
-  let row = 0, col = 0;
-  for (let c = 0; c < str.length; c++) {
-    let cc = str[c], nc = str[c+1];
-    arr[row] = arr[row] || [];
-    arr[row][col] = arr[row][col] || '';
-    if (cc == '"' && quote && nc == '"') { arr[row][col] += cc; ++c; continue; }
-    if (cc == '"') { quote = !quote; continue; }
-    if (cc == ',' && !quote) { ++col; continue; }
-    if (cc == '\r' && nc == '\n' && !quote) { ++row; col = 0; ++c; continue; }
-    if (cc == '\n' && !quote) { ++row; col = 0; continue; }
-    if (cc == '\r' && !quote) { ++row; col = 0; continue; }
-    arr[row][col] += cc;
-  }
-  
-  if (arr.length < 2) return [];
-  const headers = arr[0].map(h => h.trim().toLowerCase());
-  return arr.slice(1).filter(row => row.some(cell => cell.trim() !== '')).map(row => {
-    const obj: any = {};
-    headers.forEach((h, i) => {
-      obj[h] = row[i] || '';
-    });
-    return obj;
-  });
-}
+type IngestReport = {
+  rows_parsed: number;
+  rows_dropped: number;
+  duplicate_count: number;
+  alias_mapping: Record<string, string>;
+  missing_required: string[];
+};
+
+type UploadResponse =
+  | { needs_dedupe: true; report: IngestReport; preview: Product[] }
+  | { needs_dedupe: false; products: Product[]; report: IngestReport };
+
+const SAMPLE_CSV = `sku,name,price,category,brand,description
+TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,A comfortable cotton t-shirt.
+JNS-002,Slim Fit Jeans,49.99,Apparel,DenimWorks,Classic slim fit blue jeans.
+SNE-003,Running Sneakers,89.99,Footwear,RunFast,Lightweight running shoes.
+JAC-004,Winter Parka,129.99,Outerwear,WinterGear,Warm winter jacket with hood.
+HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.
+TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors.
+`;
 
 export default function UploadView() {
   const { setProducts, setPhase } = useAppStore();
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<Product[] | null>(null);
-  const [rawParsedData, setRawParsedData] = useState<Product[] | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [hasDuplicates, setHasDuplicates] = useState(false);
   const [duplicateCount, setDuplicateCount] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const processParsedProducts = (products: Product[]) => {
-    const skuCounts = products.reduce((acc, p) => {
-      acc[p.sku] = (acc[p.sku] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-
-    const dups = Object.values(skuCounts).filter(c => c > 1).length;
-
-    if (dups > 0) {
-      setRawParsedData(products);
-      setDuplicateCount(dups);
-      setHasDuplicates(true);
-    } else {
-      setParsedData(products);
+  const sendFile = async (file: File, strategy: "detect" | "merge" | "first") => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await uploadCatalog<UploadResponse>(file, strategy);
+      if (res.needs_dedupe) {
+        setPendingFile(file);
+        setDuplicateCount(res.report.duplicate_count);
+        setHasDuplicates(true);
+        setParsedData(null);
+      } else {
+        setParsedData(res.products);
+        setHasDuplicates(false);
+        setPendingFile(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
-    
-    setError(null);
-    if (!file.name.endsWith('.csv')) {
-      setError('Please upload a valid CSV file.');
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setError("Please upload a valid CSV file.");
       return;
     }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target?.result as string;
-        const data = parseCSV(text);
-        
-        if (data.length === 0) {
-          setError('The CSV file appears to be empty or invalid.');
-          return;
-        }
-
-        // Validate required fields
-        const firstRow = data[0];
-        if (!firstRow.sku || !firstRow.name || !firstRow.price) {
-          setError('CSV must contain "sku", "name", and "price" columns.');
-          return;
-        }
-
-        const products: Product[] = data.map(row => ({
-          sku: row.sku,
-          name: row.name,
-          price: parseFloat(row.price) || 0,
-          category: row.category,
-          brand: row.brand,
-          description: row.description,
-          image_urls: row.image_urls,
-        }));
-
-        processParsedProducts(products);
-      } catch (err) {
-        setError('Failed to parse CSV file.');
-      }
-    };
-    reader.readAsText(file);
+    sendFile(file, "detect");
   };
 
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
+  const onDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(false); };
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFile(e.dataTransfer.files[0]);
-    }
+    if (e.dataTransfer.files?.length) handleFile(e.dataTransfer.files[0]);
   };
 
   const handleContinue = () => {
@@ -130,67 +84,22 @@ export default function UploadView() {
   };
 
   const handleMergeDuplicates = () => {
-    if (!rawParsedData) return;
-    const merged: Record<string, Product> = {};
-    
-    rawParsedData.forEach(p => {
-      if (!merged[p.sku]) {
-        merged[p.sku] = { ...p };
-      } else {
-        const existing = merged[p.sku];
-        existing.name = existing.name || p.name;
-        existing.price = existing.price || p.price;
-        existing.category = existing.category || p.category;
-        existing.brand = existing.brand || p.brand;
-        
-        // Combine descriptions if they are different
-        if (!existing.description && p.description) {
-          existing.description = p.description;
-        } else if (existing.description && p.description && !existing.description.includes(p.description)) {
-          existing.description += " " + p.description;
-        }
-        
-        existing.image_urls = existing.image_urls || p.image_urls;
-      }
-    });
-    
-    setParsedData(Object.values(merged));
-    setHasDuplicates(false);
+    if (pendingFile) sendFile(pendingFile, "merge");
   };
 
   const handleDeleteDuplicates = () => {
-    if (!rawParsedData) return;
-    const seen = new Set<string>();
-    const deduplicated = rawParsedData.filter(p => {
-      if (seen.has(p.sku)) return false;
-      seen.add(p.sku);
-      return true;
-    });
-    
-    setParsedData(deduplicated);
+    if (pendingFile) sendFile(pendingFile, "first");
+  };
+
+  const cancelDuplicates = () => {
     setHasDuplicates(false);
+    setPendingFile(null);
+    setParsedData(null);
   };
 
   const loadSampleData = () => {
-    const sampleCSV = `sku,name,price,category,brand,description
-TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,A comfortable cotton t-shirt.
-JNS-002,Slim Fit Jeans,49.99,Apparel,DenimWorks,Classic slim fit blue jeans.
-SNE-003,Running Sneakers,89.99,Footwear,RunFast,Lightweight running shoes.
-JAC-004,Winter Parka,129.99,Outerwear,WinterGear,Warm winter jacket with hood.
-HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.
-TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors.`; // Added a duplicate row for demonstration
-    
-    const data = parseCSV(sampleCSV);
-    const products: Product[] = data.map(row => ({
-      sku: row.sku,
-      name: row.name,
-      price: parseFloat(row.price) || 0,
-      category: row.category,
-      brand: row.brand,
-      description: row.description,
-    }));
-    
-    processParsedProducts(products);
+    const file = new File([SAMPLE_CSV], "sample-catalog.csv", { type: "text/csv" });
+    sendFile(file, "detect");
   };
 
   return (
@@ -219,9 +128,10 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <button 
+            <button
               onClick={handleMergeDuplicates}
-              className="flex flex-col items-center text-center p-6 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-purple-500/50 transition-all group"
+              disabled={submitting}
+              className="flex flex-col items-center text-center p-6 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-purple-500/50 transition-all group disabled:opacity-60"
             >
               <div className="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <Merge className="w-6 h-6 text-purple-400" />
@@ -230,9 +140,10 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
               <p className="text-sm text-white/50">Combine data from duplicate rows. Missing fields will be filled, and descriptions will be combined.</p>
             </button>
 
-            <button 
+            <button
               onClick={handleDeleteDuplicates}
-              className="flex flex-col items-center text-center p-6 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-red-500/50 transition-all group"
+              disabled={submitting}
+              className="flex flex-col items-center text-center p-6 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-red-500/50 transition-all group disabled:opacity-60"
             >
               <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <Trash2 className="w-6 h-6 text-red-400" />
@@ -241,10 +152,11 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
               <p className="text-sm text-white/50">Keep only the first occurrence of each SKU and discard all subsequent duplicate rows.</p>
             </button>
           </div>
-          
+
           <div className="text-center">
-            <button 
-              onClick={() => { setHasDuplicates(false); setRawParsedData(null); setParsedData(null); }}
+            <button
+              onClick={cancelDuplicates}
+              disabled={submitting}
               className="text-sm text-white/50 hover:text-white transition-colors"
             >
               Cancel and upload a different file
@@ -253,36 +165,34 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
         </div>
       ) : !parsedData ? (
         <div className="space-y-6">
-          <div 
+          <div
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
             onClick={() => fileInputRef.current?.click()}
             className={`relative overflow-hidden border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 ${
-              isDragging 
-                ? 'border-purple-500 bg-purple-500/10 shadow-[0_0_30px_rgba(168,85,247,0.2)]' 
+              isDragging
+                ? 'border-purple-500 bg-purple-500/10 shadow-[0_0_30px_rgba(168,85,247,0.2)]'
                 : 'border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/30'
             }`}
           >
-            <input 
-              type="file" 
-              accept=".csv" 
-              className="hidden" 
+            <input
+              type="file"
+              accept=".csv"
+              className="hidden"
               ref={fileInputRef}
               onChange={(e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                  handleFile(e.target.files[0]);
-                }
+                if (e.target.files?.length) handleFile(e.target.files[0]);
               }}
             />
-            
+
             <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center">
               <UploadCloud className={`w-10 h-10 ${isDragging ? 'text-purple-400' : 'text-white/60'}`} />
             </div>
-            
+
             <h3 className="text-xl font-semibold mb-2">Drag & Drop your CSV here</h3>
-            <p className="text-white/50 mb-6">or click to browse files</p>
-            
+            <p className="text-white/50 mb-6">{submitting ? "Uploading..." : "or click to browse files"}</p>
+
             <div className="inline-flex items-center gap-2 text-sm text-white/40 bg-black/20 px-4 py-2 rounded-full">
               <FileText className="w-4 h-4" />
               Requires: sku, name, price
@@ -297,9 +207,10 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
           )}
 
           <div className="text-center">
-            <button 
+            <button
               onClick={loadSampleData}
-              className="text-sm text-purple-400 hover:text-purple-300 underline underline-offset-4 transition-colors"
+              disabled={submitting}
+              className="text-sm text-purple-400 hover:text-purple-300 underline underline-offset-4 transition-colors disabled:opacity-60"
             >
               Or use sample catalog data
             </button>
@@ -317,7 +228,7 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
                 <p className="text-white/60">{parsedData.length} products ready for audit</p>
               </div>
             </div>
-            <button 
+            <button
               onClick={() => setParsedData(null)}
               className="text-sm text-white/50 hover:text-white transition-colors"
             >
@@ -354,7 +265,7 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
           </div>
 
           <div className="flex justify-end">
-            <button 
+            <button
               onClick={handleContinue}
               className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white px-8 py-3 rounded-xl font-semibold shadow-lg shadow-purple-500/25 hover:shadow-xl hover:shadow-purple-500/40 transition-all duration-300 transform hover:-translate-y-0.5"
             >
@@ -367,4 +278,3 @@ TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors
     </div>
   );
 }
-

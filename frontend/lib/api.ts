@@ -42,3 +42,13 @@ export async function ping(): Promise<{ status: string; db: string }> {
   const res = await fetch(`${base}/healthz`);
   return res.json();
 }
+
+export async function uploadCatalog<T>(
+  file: File,
+  dedupeStrategy: "detect" | "merge" | "first",
+): Promise<T> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("dedupe_strategy", dedupeStrategy);
+  return apiFetch<T>("/catalog/upload", { method: "POST", body: fd });
+}
