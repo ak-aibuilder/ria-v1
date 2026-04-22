@@ -6,10 +6,12 @@ import UploadView from './uploadview';
 import AuditView from './auditview';
 import EnrichView from './enrichview';
 import ValidateView from './validateview';
-import { LayoutDashboard, Upload, Sparkles, MessageSquare, RefreshCw, Download } from 'lucide-react';
+import { LayoutDashboard, Upload, Sparkles, MessageSquare, RefreshCw, Download, LogOut } from 'lucide-react';
+import { useAuth } from '../lib/auth';
 
 export default function MainApp() {
   const { state, setPhase, resetSession } = useAppStore();
+  const { user, logout } = useAuth();
 
   const phases = [
     { id: 'upload', label: 'Upload', icon: Upload },
@@ -60,13 +62,25 @@ export default function MainApp() {
               <Download className="w-4 h-4" />
               Export
             </button>
-            <button 
+            <button
               onClick={resetSession}
               className="flex items-center gap-2 text-sm font-medium text-red-400 hover:text-red-300 transition-colors px-3 py-1.5 rounded-md hover:bg-red-400/10"
             >
               <RefreshCw className="w-4 h-4" />
               Reset Session
             </button>
+            {user && (
+              <div className="flex items-center gap-2 pl-2 ml-1 border-l border-white/10">
+                <span className="text-xs text-white/50 font-mono hidden sm:inline">{user.email}</span>
+                <button
+                  onClick={logout}
+                  className="flex items-center gap-2 text-sm font-medium text-white/60 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-white/5"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
