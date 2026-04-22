@@ -80,6 +80,8 @@ interface AppContextType {
   setProducts: (products: Product[]) => void;
   setScoredProducts: (scored: ScoredProduct[]) => void;
   setEnrichedProducts: (enriched: EnrichedProduct[]) => void;
+  updateEnrichedProduct: (sku: string, fields: Partial<EnrichedProduct['enriched_fields']>) => void;
+  reAuditProduct: (sku: string) => void;
   addTranscript: (transcript: AgentTranscript) => void;
   resetSession: () => void;
 }
@@ -92,6 +94,40 @@ const initialState: AppState = {
   transcripts: [],
   sessionId: '',
   lastActivity: 0,
+};
+
+export const calculateProductScore = (product: Product, enrichedFields?: any): ScoredProduct => {
+  const desc = enrichedFields?.description || product.description || '';
+  const hasDesc = desc.length > 20;
+  const hasCategory = !!product.category;
+  const hasBrand = !!product.brand;
+  const hasQa = enrichedFields?.q_and_a && enrichedFields.q_and_a.length > 0;
+  const hasFacets = enrichedFields?.agent_facets && Object.keys(enrichedFields.agent_facets).length > 0;
+
+  // Base scores
+  const d1 = hasCategory && hasBrand ? 8.5 : 4.0;
+  const d2 = hasDesc ? (enrichedFields?.description ? 9.5 : 6.5) : 3.0;
+  const d3 = hasQa ? 9.5 : 2.0;
+  const d4 = 3.5; // Reviews (mocked as low for demo)
+  const d5 = enrichedFields?.relationship_type ? 9.0 : 4.0;
+  const d6 = hasFacets ? 9.5 : 2.5;
+
+  const scores = { D1: d1, D2: d2, D3: d3, D4: d4, D5: d5, D6: d6 };
+  const readiness_score = (d1 * 0.25 + d2 * 0.15 + d3 * 0.20 + d4 * 0.10 + d5 * 0.15 + d6 * 0.15);
+
+  const gaps: Gap[] = [];
+  if (d1 < 6) gaps.push({ dimension: 'D1', severity: 'high', reason: 'Missing structured attributes (brand, category)' });
+  if (d2 < 6) gaps.push({ dimension: 'D2', severity: 'medium', reason: 'Description lacks detail for agent reasoning' });
+  if (d3 < 6) gaps.push({ dimension: 'D3', severity: 'high', reason: 'No conversational Q&A pairs available' });
+  if (d5 < 6) gaps.push({ dimension: 'D5', severity: 'medium', reason: 'Missing product relationships' });
+  if (d6 < 6) gaps.push({ dimension: 'D6', severity: 'high', reason: 'Missing agent-actionable facets' });
+
+  return {
+    sku: product.sku,
+    readiness_score,
+    dimension_scores: scores,
+    gaps
+  };
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -134,6 +170,31 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const setProducts = (products: Product[]) => setState(s => ({ ...s, products }));
   const setScoredProducts = (scoredProducts: ScoredProduct[]) => setState(s => ({ ...s, scoredProducts }));
   const setEnrichedProducts = (enrichedProducts: EnrichedProduct[]) => setState(s => ({ ...s, enrichedProducts }));
+  
+  const updateEnrichedProduct = (sku: string, fields: Partial<EnrichedProduct['enriched_fields']>) => {
+    setState(s => ({
+      ...s,
+      enrichedProducts: s.enrichedProducts.map(p =>
+        p.sku === sku ? { ...p, enriched_fields: { ...p.enriched_fields, ...fields } } : p
+      )
+    }));
+  };
+
+  const reAuditProduct = (sku: string) => {
+    setState(s => {
+      const product = s.products.find(p => p.sku === sku);
+      const enriched = s.enrichedProducts.find(p => p.sku === sku);
+      if (!product) return s;
+
+      const newScore = calculateProductScore(product, enriched?.enriched_fields);
+
+      return {
+        ...s,
+        scoredProducts: s.scoredProducts.map(sp => sp.sku === sku ? newScore : sp)
+      };
+    });
+  };
+
   const addTranscript = (transcript: AgentTranscript) => setState(s => ({ ...s, transcripts: [...s.transcripts, transcript] }));
   const resetSession = () => {
     sessionStorage.removeItem('ria_session');
@@ -146,7 +207,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }
 
   return (
-    <AppContext.Provider value={{ state, setPhase, setProducts, setScoredProducts, setEnrichedProducts, addTranscript, resetSession }}>
+    <AppContext.Provider value={{ 
+      state, 
+      setPhase, 
+      setProducts, 
+      setScoredProducts, 
+      setEnrichedProducts, 
+      updateEnrichedProduct,
+      reAuditProduct,
+      addTranscript, 
+      resetSession 
+    }}>
       {children}
     </AppContext.Provider>
   );
