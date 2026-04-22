@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useAppStore, EnrichedProduct } from '../lib/store';
-import { Sparkles, Check, X, ArrowRight, Database, ShieldCheck, Bot } from 'lucide-react';
+import { Sparkles, Check, X, ArrowRight, Database, ShieldCheck, Bot, MessageSquare, Edit2, Save, Plus, Trash2 } from 'lucide-react';
 
 // Mock enrichment logic
 const generateMockEnrichment = (products: any[]): EnrichedProduct[] => {
@@ -39,10 +39,16 @@ const generateMockEnrichment = (products: any[]): EnrichedProduct[] => {
 };
 
 export default function EnrichView() {
-  const { state, setEnrichedProducts, setPhase } = useAppStore();
+  const { state, setEnrichedProducts, setPhase, updateEnrichedProduct, reAuditProduct } = useAppStore();
   const [isEnriching, setIsEnriching] = useState(true);
   const [progress, setProgress] = useState(0);
   const [selectedSku, setSelectedSku] = useState<string | null>(null);
+
+  // Edit state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDesc, setEditDesc] = useState('');
+  const [editFacets, setEditFacets] = useState<Array<{key: string, value: string}>>([]);
+  const [editQA, setEditQA] = useState<Array<{q: string, a: string}>>([]);
 
   useEffect(() => {
     if (state.enrichedProducts.length === 0 && state.products.length > 0) {
@@ -68,6 +74,42 @@ export default function EnrichView() {
     }
   }, [state.products, state.enrichedProducts.length, setEnrichedProducts]);
 
+  // Reset edit state when selected product changes
+  useEffect(() => {
+    setIsEditing(false);
+  }, [selectedSku]);
+
+  const selectedProduct = state.enrichedProducts.find(p => p.sku === selectedSku);
+
+  const handleEditClick = () => {
+    if (!selectedProduct) return;
+    setEditDesc(selectedProduct.enriched_fields.description || '');
+    
+    const facets = selectedProduct.enriched_fields.agent_facets || {};
+    setEditFacets(Object.entries(facets).map(([k, v]) => ({ key: k, value: v as string })));
+    
+    setEditQA([...(selectedProduct.enriched_fields.q_and_a || [])]);
+    setIsEditing(true);
+  };
+
+  const handleSaveClick = () => {
+    if (!selectedProduct) return;
+    
+    const newFacets: Record<string, string> = {};
+    editFacets.forEach(f => {
+      if (f.key.trim()) newFacets[f.key.trim()] = f.value.trim();
+    });
+
+    updateEnrichedProduct(selectedProduct.sku, {
+      description: editDesc,
+      agent_facets: newFacets,
+      q_and_a: editQA.filter(qa => qa.q.trim() && qa.a.trim())
+    });
+    
+    reAuditProduct(selectedProduct.sku);
+    setIsEditing(false);
+  };
+
   if (isEnriching) {
     return (
       <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-500 max-w-md mx-auto">
@@ -90,8 +132,6 @@ export default function EnrichView() {
     );
   }
 
-  const selectedProduct = state.enrichedProducts.find(p => p.sku === selectedSku);
-
   return (
     <div className="max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-6">
@@ -100,7 +140,7 @@ export default function EnrichView() {
             Data Enrichment
           </h2>
           <p className="text-lg text-white/70 max-w-2xl">
-            Review the AI-generated attributes. Original data is preserved, and new fields are tagged with provenance metadata.
+            Review and modify the AI-generated attributes. Saving changes will automatically re-run the readiness audit for that product.
           </p>
         </div>
         
@@ -121,20 +161,29 @@ export default function EnrichView() {
             <h3 className="font-semibold">Products ({state.enrichedProducts.length})</h3>
           </div>
           <div className="overflow-y-auto flex-1 p-2 space-y-1">
-            {state.enrichedProducts.map(p => (
-              <button
-                key={p.sku}
-                onClick={() => setSelectedSku(p.sku)}
-                className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
-                  selectedSku === p.sku 
-                    ? 'bg-purple-500/20 border border-purple-500/30 text-white' 
-                    : 'hover:bg-white/5 text-white/70 border border-transparent'
-                }`}
-              >
-                <div className="font-medium truncate">{p.original_fields.name}</div>
-                <div className="text-xs opacity-60 font-mono mt-1">{p.sku}</div>
-              </button>
-            ))}
+            {state.enrichedProducts.map(p => {
+              // Check if this product has a perfect score now
+              const scored = state.scoredProducts.find(sp => sp.sku === p.sku);
+              const isReady = scored && scored.readiness_score >= 8;
+
+              return (
+                <button
+                  key={p.sku}
+                  onClick={() => setSelectedSku(p.sku)}
+                  className={`w-full text-left px-4 py-3 rounded-xl transition-all flex items-center justify-between ${
+                    selectedSku === p.sku 
+                      ? 'bg-purple-500/20 border border-purple-500/30 text-white' 
+                      : 'hover:bg-white/5 text-white/70 border border-transparent'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{p.original_fields.name}</div>
+                    <div className="text-xs opacity-60 font-mono mt-1">{p.sku}</div>
+                  </div>
+                  {isReady && <Check className="w-4 h-4 text-green-400 flex-shrink-0 ml-2" />}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -150,15 +199,42 @@ export default function EnrichView() {
                     <ShieldCheck className="w-3 h-3" />
                     {selectedProduct.provenance_metadata.source}
                   </span>
+                  {state.scoredProducts.find(sp => sp.sku === selectedProduct.sku) && (
+                    <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-white/10 text-white/70 border border-white/20">
+                      Score: {state.scoredProducts.find(sp => sp.sku === selectedProduct.sku)?.readiness_score.toFixed(1)}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2">
-                <button className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors flex items-center gap-2">
-                  <X className="w-4 h-4 text-red-400" /> Reject
-                </button>
-                <button className="px-4 py-2 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 text-sm font-medium transition-colors flex items-center gap-2">
-                  <Check className="w-4 h-4" /> Approve
-                </button>
+                {isEditing ? (
+                  <>
+                    <button 
+                      onClick={() => setIsEditing(false)} 
+                      className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      <X className="w-4 h-4" /> Cancel
+                    </button>
+                    <button 
+                      onClick={handleSaveClick} 
+                      className="px-4 py-2 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/30 text-sm font-medium transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(168,85,247,0.2)]"
+                    >
+                      <Save className="w-4 h-4" /> Save & Re-Audit
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button 
+                      onClick={handleEditClick} 
+                      className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      <Edit2 className="w-4 h-4" /> Edit
+                    </button>
+                    <button className="px-4 py-2 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 text-sm font-medium transition-colors flex items-center gap-2">
+                      <Check className="w-4 h-4" /> Approve
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -175,16 +251,29 @@ export default function EnrichView() {
                       {selectedProduct.original_fields.description || <span className="italic opacity-50">No description provided</span>}
                     </p>
                   </div>
-                  <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 relative">
-                    <div className="absolute top-4 right-4 text-xs text-purple-400 font-mono bg-purple-500/20 px-2 py-0.5 rounded">
-                      Conf: {selectedProduct.confidence_scores.description}
-                    </div>
+                  <div className={`p-4 rounded-xl relative transition-colors ${isEditing ? 'bg-purple-500/5 border border-purple-500/40' : 'bg-purple-500/10 border border-purple-500/20'}`}>
+                    {!isEditing && (
+                      <div className="absolute top-4 right-4 text-xs text-purple-400 font-mono bg-purple-500/20 px-2 py-0.5 rounded">
+                        Conf: {selectedProduct.confidence_scores.description}
+                      </div>
+                    )}
                     <div className="text-xs text-purple-400 mb-2 flex items-center gap-1">
                       <Sparkles className="w-3 h-3" /> Enriched
                     </div>
-                    <p className="text-sm text-white leading-relaxed">
-                      {selectedProduct.enriched_fields.description}
-                    </p>
+                    
+                    {isEditing ? (
+                      <textarea 
+                        value={editDesc}
+                        onChange={e => setEditDesc(e.target.value)}
+                        className="w-full bg-black/40 border border-purple-500/30 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-purple-500 transition-colors resize-none"
+                        rows={5}
+                        placeholder="Enter enriched description..."
+                      />
+                    ) : (
+                      <p className="text-sm text-white leading-relaxed">
+                        {selectedProduct.enriched_fields.description}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -194,14 +283,68 @@ export default function EnrichView() {
                 <h4 className="text-sm font-semibold text-white/50 uppercase tracking-wider mb-4 flex items-center gap-2">
                   <MessageSquare className="w-4 h-4" /> Generated Q&A Pairs
                 </h4>
-                <div className="space-y-3">
-                  {selectedProduct.enriched_fields.q_and_a?.map((qa, idx) => (
-                    <div key={idx} className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                      <div className="font-medium text-sm mb-2 text-blue-100">Q: {qa.q}</div>
-                      <div className="text-sm text-blue-200/70">A: {qa.a}</div>
-                    </div>
-                  ))}
-                </div>
+                
+                {isEditing ? (
+                  <div className="space-y-3">
+                    {editQA.map((qa, idx) => (
+                      <div key={idx} className="flex gap-3 items-start p-4 rounded-xl bg-blue-500/5 border border-blue-500/30">
+                        <div className="flex-1 space-y-3">
+                          <div>
+                            <label className="text-xs text-blue-300/70 mb-1 block">Question</label>
+                            <input 
+                              value={qa.q}
+                              onChange={e => {
+                                const newQA = [...editQA];
+                                newQA[idx].q = e.target.value;
+                                setEditQA(newQA);
+                              }}
+                              placeholder="e.g., Is this suitable for daily use?"
+                              className="w-full bg-black/40 border border-blue-500/30 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs text-blue-300/70 mb-1 block">Answer</label>
+                            <input 
+                              value={qa.a}
+                              onChange={e => {
+                                const newQA = [...editQA];
+                                newQA[idx].a = e.target.value;
+                                setEditQA(newQA);
+                              }}
+                              placeholder="e.g., Yes, it is highly durable."
+                              className="w-full bg-black/40 border border-blue-500/30 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                            />
+                          </div>
+                        </div>
+                        <button 
+                          onClick={() => setEditQA(editQA.filter((_, i) => i !== idx))} 
+                          className="p-2 text-red-400 hover:bg-red-400/20 rounded-lg transition-colors mt-6"
+                          title="Remove Q&A"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    ))}
+                    <button 
+                      onClick={() => setEditQA([...editQA, {q: '', a: ''}])} 
+                      className="text-sm text-blue-400 flex items-center gap-1 hover:text-blue-300 px-4 py-2 rounded-lg hover:bg-blue-500/10 transition-colors border border-dashed border-blue-500/30 w-full justify-center"
+                    >
+                      <Plus className="w-4 h-4" /> Add New Q&A Pair
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {selectedProduct.enriched_fields.q_and_a?.map((qa, idx) => (
+                      <div key={idx} className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
+                        <div className="font-medium text-sm mb-2 text-blue-100">Q: {qa.q}</div>
+                        <div className="text-sm text-blue-200/70">A: {qa.a}</div>
+                      </div>
+                    ))}
+                    {(!selectedProduct.enriched_fields.q_and_a || selectedProduct.enriched_fields.q_and_a.length === 0) && (
+                      <div className="text-sm text-white/40 italic">No Q&A pairs generated.</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Agent Facets */}
@@ -209,14 +352,60 @@ export default function EnrichView() {
                 <h4 className="text-sm font-semibold text-white/50 uppercase tracking-wider mb-4 flex items-center gap-2">
                   <Bot className="w-4 h-4" /> Agent-Actionable Facets
                 </h4>
-                <div className="flex flex-wrap gap-3">
-                  {Object.entries(selectedProduct.enriched_fields.agent_facets || {}).map(([key, val]) => (
-                    <div key={key} className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-3">
-                      <span className="text-xs text-white/50 font-mono">{key}</span>
-                      <span className="text-sm font-medium">{val}</span>
-                    </div>
-                  ))}
-                </div>
+                
+                {isEditing ? (
+                  <div className="space-y-3">
+                    {editFacets.map((facet, idx) => (
+                      <div key={idx} className="flex gap-3 items-center">
+                        <input 
+                          value={facet.key}
+                          onChange={e => {
+                            const newFacets = [...editFacets];
+                            newFacets[idx].key = e.target.value;
+                            setEditFacets(newFacets);
+                          }}
+                          placeholder="Facet Key (e.g. best_for)"
+                          className="w-1/3 bg-black/40 border border-white/20 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-white/50 font-mono transition-colors"
+                        />
+                        <input 
+                          value={facet.value}
+                          onChange={e => {
+                            const newFacets = [...editFacets];
+                            newFacets[idx].value = e.target.value;
+                            setEditFacets(newFacets);
+                          }}
+                          placeholder="Value"
+                          className="flex-1 bg-black/40 border border-white/20 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-white/50 transition-colors"
+                        />
+                        <button 
+                          onClick={() => setEditFacets(editFacets.filter((_, i) => i !== idx))} 
+                          className="p-2 text-red-400 hover:bg-red-400/20 rounded-lg transition-colors"
+                          title="Remove Facet"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    ))}
+                    <button 
+                      onClick={() => setEditFacets([...editFacets, {key: '', value: ''}])} 
+                      className="text-sm text-white/60 flex items-center gap-1 hover:text-white px-4 py-2 rounded-lg hover:bg-white/5 transition-colors border border-dashed border-white/20 w-full justify-center"
+                    >
+                      <Plus className="w-4 h-4" /> Add New Facet
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-3">
+                    {Object.entries(selectedProduct.enriched_fields.agent_facets || {}).map(([key, val]) => (
+                      <div key={key} className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-3">
+                        <span className="text-xs text-white/50 font-mono">{key}</span>
+                        <span className="text-sm font-medium">{val}</span>
+                      </div>
+                    ))}
+                    {(!selectedProduct.enriched_fields.agent_facets || Object.keys(selectedProduct.enriched_fields.agent_facets).length === 0) && (
+                      <div className="text-sm text-white/40 italic">No facets generated.</div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -225,7 +414,4 @@ export default function EnrichView() {
     </div>
   );
 }
-
-// Need to import MessageSquare for the icon above
-import { MessageSquare } from 'lucide-react';
 
