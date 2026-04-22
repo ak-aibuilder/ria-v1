@@ -39,7 +39,9 @@ export default function UploadView() {
   const [parsedData, setParsedData] = useState<Product[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = (file: File) => {
+  const handleFile = (file: File | undefined) => {
+    if (!file) return;
+    
     setError(null);
     if (!file.name.endsWith('.csv')) {
       setError('Please upload a valid CSV file.');
@@ -156,7 +158,11 @@ HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.`;
               accept=".csv" 
               className="hidden" 
               ref={fileInputRef}
-              onChange={(e) => e.target.files && handleFile(e.target.files[0])}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  handleFile(e.target.files[0]);
+                }
+              }}
             />
             
             <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center">
