@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from 'react';
 import { useAppStore, Product } from '../lib/store';
-import { UploadCloud, FileText, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import { UploadCloud, FileText, AlertCircle, CheckCircle2, ArrowRight, AlertTriangle, Merge, Trash2 } from 'lucide-react';
 
 function parseCSV(str: string) {
   const arr: string[][] = [];
@@ -37,7 +37,27 @@ export default function UploadView() {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parsedData, setParsedData] = useState<Product[] | null>(null);
+  const [rawParsedData, setRawParsedData] = useState<Product[] | null>(null);
+  const [hasDuplicates, setHasDuplicates] = useState(false);
+  const [duplicateCount, setDuplicateCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const processParsedProducts = (products: Product[]) => {
+    const skuCounts = products.reduce((acc, p) => {
+      acc[p.sku] = (acc[p.sku] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const dups = Object.values(skuCounts).filter(c => c > 1).length;
+
+    if (dups > 0) {
+      setRawParsedData(products);
+      setDuplicateCount(dups);
+      setHasDuplicates(true);
+    } else {
+      setParsedData(products);
+    }
+  };
 
   const handleFile = (file: File | undefined) => {
     if (!file) return;
@@ -76,7 +96,7 @@ export default function UploadView() {
           image_urls: row.image_urls,
         }));
 
-        setParsedData(products);
+        processParsedProducts(products);
       } catch (err) {
         setError('Failed to parse CSV file.');
       }
@@ -109,13 +129,56 @@ export default function UploadView() {
     }
   };
 
+  const handleMergeDuplicates = () => {
+    if (!rawParsedData) return;
+    const merged: Record<string, Product> = {};
+    
+    rawParsedData.forEach(p => {
+      if (!merged[p.sku]) {
+        merged[p.sku] = { ...p };
+      } else {
+        const existing = merged[p.sku];
+        existing.name = existing.name || p.name;
+        existing.price = existing.price || p.price;
+        existing.category = existing.category || p.category;
+        existing.brand = existing.brand || p.brand;
+        
+        // Combine descriptions if they are different
+        if (!existing.description && p.description) {
+          existing.description = p.description;
+        } else if (existing.description && p.description && !existing.description.includes(p.description)) {
+          existing.description += " " + p.description;
+        }
+        
+        existing.image_urls = existing.image_urls || p.image_urls;
+      }
+    });
+    
+    setParsedData(Object.values(merged));
+    setHasDuplicates(false);
+  };
+
+  const handleDeleteDuplicates = () => {
+    if (!rawParsedData) return;
+    const seen = new Set<string>();
+    const deduplicated = rawParsedData.filter(p => {
+      if (seen.has(p.sku)) return false;
+      seen.add(p.sku);
+      return true;
+    });
+    
+    setParsedData(deduplicated);
+    setHasDuplicates(false);
+  };
+
   const loadSampleData = () => {
     const sampleCSV = `sku,name,price,category,brand,description
 TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,A comfortable cotton t-shirt.
 JNS-002,Slim Fit Jeans,49.99,Apparel,DenimWorks,Classic slim fit blue jeans.
 SNE-003,Running Sneakers,89.99,Footwear,RunFast,Lightweight running shoes.
 JAC-004,Winter Parka,129.99,Outerwear,WinterGear,Warm winter jacket with hood.
-HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.`;
+HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.
+TSH-001,Basic Cotton T-Shirt,19.99,Apparel,BasicsCo,Available in multiple colors.`; // Added a duplicate row for demonstration
     
     const data = parseCSV(sampleCSV);
     const products: Product[] = data.map(row => ({
@@ -126,7 +189,8 @@ HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.`;
       brand: row.brand,
       description: row.description,
     }));
-    setParsedData(products);
+    
+    processParsedProducts(products);
   };
 
   return (
@@ -140,7 +204,54 @@ HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.`;
         </p>
       </div>
 
-      {!parsedData ? (
+      {hasDuplicates ? (
+        <div className="bg-white/5 border border-yellow-500/30 rounded-2xl p-8 backdrop-blur-xl shadow-2xl animate-in zoom-in-95 duration-300">
+          <div className="flex items-start gap-4 mb-8">
+            <div className="w-12 h-12 rounded-full bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-6 h-6 text-yellow-400" />
+            </div>
+            <div>
+              <h3 className="text-xl font-semibold text-yellow-400">Duplicate SKUs Detected</h3>
+              <p className="text-white/70 mt-1">
+                We found {duplicateCount} SKU(s) with multiple entries in your catalog. How would you like to handle them?
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <button 
+              onClick={handleMergeDuplicates}
+              className="flex flex-col items-center text-center p-6 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-purple-500/50 transition-all group"
+            >
+              <div className="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <Merge className="w-6 h-6 text-purple-400" />
+              </div>
+              <h4 className="font-semibold mb-2">Merge Duplicates</h4>
+              <p className="text-sm text-white/50">Combine data from duplicate rows. Missing fields will be filled, and descriptions will be combined.</p>
+            </button>
+
+            <button 
+              onClick={handleDeleteDuplicates}
+              className="flex flex-col items-center text-center p-6 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-red-500/50 transition-all group"
+            >
+              <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <Trash2 className="w-6 h-6 text-red-400" />
+              </div>
+              <h4 className="font-semibold mb-2">Delete Duplicates</h4>
+              <p className="text-sm text-white/50">Keep only the first occurrence of each SKU and discard all subsequent duplicate rows.</p>
+            </button>
+          </div>
+          
+          <div className="text-center">
+            <button 
+              onClick={() => { setHasDuplicates(false); setRawParsedData(null); setParsedData(null); }}
+              className="text-sm text-white/50 hover:text-white transition-colors"
+            >
+              Cancel and upload a different file
+            </button>
+          </div>
+        </div>
+      ) : !parsedData ? (
         <div className="space-y-6">
           <div 
             onDragOver={onDragOver}
@@ -203,7 +314,7 @@ HAT-005,Baseball Cap,14.99,Accessories,HeadWear,Adjustable baseball cap.`;
               </div>
               <div>
                 <h3 className="text-xl font-semibold">Catalog Parsed Successfully</h3>
-                <p className="text-white/60">{parsedData.length} products found</p>
+                <p className="text-white/60">{parsedData.length} products ready for audit</p>
               </div>
             </div>
             <button 
