@@ -18,6 +18,8 @@ ALIAS_MAP: dict[str, str] = {
     "product_id": "sku",
     "item_id": "sku",
     "style": "sku",
+    "variant_sku": "sku",  # Shopify export
+    "handle": "sku",        # Shopify slug fallback when Variant SKU is blank
     # name
     "name": "name",
     "product_name": "name",
@@ -28,26 +30,33 @@ ALIAS_MAP: dict[str, str] = {
     "desc": "description",
     "long_description": "description",
     "product_description": "description",
+    "body_html": "description",  # Shopify "Body (HTML)" after _snake()
     # price
     "price": "price",
     "unit_price": "price",
     "sale_price": "price",
     "msrp": "price",
+    "variant_price": "price",  # Shopify export
     # category
     "category": "category",
     "department": "category",
     "category_path": "category",
     "taxonomy": "category",
+    "type": "category",     # Shopify product type
+    "tags": "category",     # Shopify tags fallback when Type is blank
     # image_urls
     "image": "image_urls",
     "images": "image_urls",
     "image_url": "image_urls",
     "image_urls": "image_urls",
     "photo_url": "image_urls",
+    "image_src": "image_urls",   # Shopify export
+    "variant_image": "image_urls",
     # brand
     "brand": "brand",
     "brand_name": "brand",
     "manufacturer": "brand",
+    "vendor": "brand",   # Shopify export
     # attributes
     "attributes": "attributes",
     "specs": "attributes",

@@ -39,7 +39,31 @@ function Hydrate() {
         setProducts(uniqueProducts);
 
         if (s.scored_products?.length) setScoredProducts(s.scored_products);
-        if (s.enriched_products?.length) setEnrichedProducts(s.enriched_products);
+
+        if (s.enriched_products?.length) {
+          const adapted = s.enriched_products.map((ep: any) => ({
+            sku: ep.sku,
+            original_fields: ep.original_fields ?? {},
+            enriched_fields: {
+              description: ep.enriched_fields?.description,
+              q_and_a: (ep.enriched_fields?.q_and_a ?? []).map((qa: any) => ({
+                q: qa.q ?? qa.question ?? "",
+                a: qa.a ?? qa.answer ?? "",
+                intent: qa.intent,
+                speculative: qa.speculative,
+              })),
+              agent_facets: Object.fromEntries(
+                Object.entries(ep.enriched_fields?.agent_facets ?? {}).map(
+                  ([k, v]) => [k, Array.isArray(v) ? (v as string[]).join(", ") : String(v ?? "")],
+                ),
+              ),
+              relationship_type: ep.enriched_fields?.relationship_type,
+            },
+            provenance_metadata: ep.provenance_metadata ?? { source: "ria_enriched", timestamp: new Date().toISOString() },
+            confidence_scores: ep.confidence_scores ?? {},
+          }));
+          setEnrichedProducts(adapted);
+        }
 
         // Derive phase from server-side data. Backend only updates phase when an
         // audit/enrich/validate run actually persists results, so we let local

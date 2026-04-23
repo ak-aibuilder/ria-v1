@@ -60,3 +60,40 @@ export async function runAudit<T>(): Promise<T> {
 export async function rescoreProduct<T>(sku: string): Promise<T> {
   return apiFetch<T>(`/audit/rescore/${encodeURIComponent(sku)}`, { method: "POST" });
 }
+
+export async function runEnrichment<T>(includeReviews = false): Promise<T> {
+  return apiFetch<T>("/enrich/run", {
+    method: "POST",
+    body: JSON.stringify({ include_reviews: includeReviews }),
+  });
+}
+
+export type EnrichmentPatch = {
+  // D1 source overrides
+  name?: string;
+  price?: number;
+  category?: string;
+  brand?: string;
+  image_urls?: string[];
+  attributes?: Record<string, any>;
+  // D2/D3/D5/D6 enriched fields
+  description?: string;
+  q_and_a?: any[];
+  agent_facets?: Record<string, any>;
+  relationship_type?: any[];
+};
+
+export async function patchEnrichedProduct<T>(sku: string, patch: EnrichmentPatch): Promise<T> {
+  return apiFetch<T>(`/enrich/${encodeURIComponent(sku)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function getEnrichmentProgress(): Promise<{
+  total: number;
+  completed: number;
+  status: "idle" | "running" | "done" | "error";
+}> {
+  return apiFetch("/enrich/progress");
+}

@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useAppStore, ScoredProduct } from '../lib/store';
 import { runAudit } from '../lib/api';
 import { AlertTriangle, CheckCircle, Sparkles, ArrowRight, BarChart3 } from 'lucide-react';
+import RubricInfo from './rubricinfo';
 
 export default function AuditView() {
   const { state, setScoredProducts, setPhase } = useAppStore();
@@ -85,11 +86,14 @@ export default function AuditView() {
     <div className="max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
         <div>
-          <h2 className="text-4xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
-            Readiness Audit Results
-          </h2>
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
+              Readiness Audit Results
+            </h2>
+            <RubricInfo />
+          </div>
           <p className="text-lg text-white/70 max-w-2xl">
-            Your catalog has been scored against Agentic Commerce Protocol standards. 
+            Your catalog has been scored against Agentic Commerce Protocol standards.
             Products scoring below 7.0 will cause AI agents to hallucinate or fail.
           </p>
         </div>
