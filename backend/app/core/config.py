@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     MONGODB_DB: str = "ria"
     JWT_SECRET: str = "change-me-in-production"
     JWT_EXPIRES_IN: int = 1800
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str  # required — set in backend/.env (comma-separated origins)
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_MODEL: str = "claude-sonnet-4-6"
 

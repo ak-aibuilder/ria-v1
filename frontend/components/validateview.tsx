@@ -152,9 +152,9 @@ export default function ValidateView() {
   );
 
   return (
-    <div className="max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 h-[calc(100vh-200px)] flex flex-col">
+    <div className="max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 min-h-[600px] md:h-[calc(100vh-200px)] flex flex-col">
       <div className="text-center mb-6 flex-shrink-0">
-        <h2 className="text-4xl font-bold mb-3 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
+        <h2 className="text-2xl md:text-4xl font-bold mb-3 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
           Agent Validation Demo
         </h2>
         <p className="text-lg text-white/70 max-w-2xl mx-auto">

@@ -87,7 +87,7 @@ export default function AuditView() {
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-10 gap-6">
         <div>
           <div className="flex items-center gap-3 mb-4">
-            <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
+            <h2 className="text-2xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
               Readiness Audit Results
             </h2>
             <RubricInfo />

@@ -1,5 +1,10 @@
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+const _BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
+if (!_BASE_URL) {
+  throw new Error(
+    "NEXT_PUBLIC_API_BASE_URL is not set. Add it to frontend/.env.local before building or running the app.",
+  );
+}
+export const API_BASE_URL: string = _BASE_URL;
 
 const TOKEN_KEY = "ria_token";
 

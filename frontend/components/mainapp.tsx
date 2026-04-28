@@ -41,43 +41,49 @@ export default function MainApp() {
 
       {/* Header */}
       <header className="relative z-10 border-b border-white/10 bg-slate-950/50 backdrop-blur-xl sticky top-0">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center shadow-lg shadow-purple-500/20 flex-shrink-0">
               <Sparkles className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
+            <span className="font-bold text-lg md:text-xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
               RIA
             </span>
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white/10 text-white/70 border border-white/5 ml-2">
+            <span className="hidden md:inline text-xs font-medium px-2 py-0.5 rounded-full bg-white/10 text-white/70 border border-white/5 ml-2">
               Retail Integration Agent
             </span>
           </div>
 
-          <div className="flex items-center gap-4">
-            <button 
+          <div className="flex items-center gap-1 md:gap-3">
+            <button
               onClick={handleExport}
-              className="flex items-center gap-2 text-sm font-medium text-white/70 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-white/5"
+              aria-label="Export session"
+              title="Export"
+              className="flex items-center gap-2 text-sm font-medium text-white/70 hover:text-white transition-colors px-2 md:px-3 py-1.5 rounded-md hover:bg-white/5"
             >
               <Download className="w-4 h-4" />
-              Export
+              <span className="hidden md:inline">Export</span>
             </button>
             <button
               onClick={resetSession}
-              className="flex items-center gap-2 text-sm font-medium text-red-400 hover:text-red-300 transition-colors px-3 py-1.5 rounded-md hover:bg-red-400/10"
+              aria-label="Reset session"
+              title="Reset Session"
+              className="flex items-center gap-2 text-sm font-medium text-red-400 hover:text-red-300 transition-colors px-2 md:px-3 py-1.5 rounded-md hover:bg-red-400/10"
             >
               <RefreshCw className="w-4 h-4" />
-              Reset Session
+              <span className="hidden md:inline">Reset Session</span>
             </button>
             {user && (
-              <div className="flex items-center gap-2 pl-2 ml-1 border-l border-white/10">
-                <span className="text-xs text-white/50 font-mono hidden sm:inline">{user.email}</span>
+              <div className="flex items-center gap-1 md:gap-2 pl-2 ml-1 border-l border-white/10">
+                <span className="text-xs text-white/50 font-mono hidden lg:inline">{user.email}</span>
                 <button
                   onClick={logout}
-                  className="flex items-center gap-2 text-sm font-medium text-white/60 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-white/5"
+                  aria-label="Log out"
+                  title="Logout"
+                  className="flex items-center gap-2 text-sm font-medium text-white/60 hover:text-white transition-colors px-2 md:px-3 py-1.5 rounded-md hover:bg-white/5"
                 >
                   <LogOut className="w-4 h-4" />
-                  Logout
+                  <span className="hidden md:inline">Logout</span>
                 </button>
               </div>
             )}
@@ -86,32 +92,33 @@ export default function MainApp() {
       </header>
 
       {/* Navigation / Progress */}
-      <div className="relative z-10 max-w-7xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-8 relative">
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-0.5 bg-white/5 -z-10 rounded-full" />
-          
+      <div className="relative z-10 max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8">
+        <div className="flex items-center justify-between mb-6 md:mb-8 relative">
+          <div className="absolute left-0 top-4 md:top-1/2 md:-translate-y-1/2 w-full h-0.5 bg-white/5 -z-10 rounded-full" />
+
           {phases.map((p, idx) => {
             const isActive = state.phase === p.id;
             const isPast = phases.findIndex(x => x.id === state.phase) > idx;
             const isAccessible = isPast || isActive || (idx === 1 && state.products.length > 0) || (idx === 2 && state.scoredProducts.length > 0) || (idx === 3 && state.enrichedProducts.length > 0);
-            
+
             return (
               <button
                 key={p.id}
                 onClick={() => isAccessible && setPhase(p.id as any)}
                 disabled={!isAccessible}
-                className={`flex flex-col items-center gap-2 relative group ${!isAccessible ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                aria-label={p.label}
+                className={`flex flex-col items-center gap-1 md:gap-2 relative group ${!isAccessible ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
               >
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
-                  isActive 
-                    ? 'bg-gradient-to-r from-purple-500 to-blue-500 shadow-lg shadow-purple-500/30 text-white scale-110' 
-                    : isPast 
-                      ? 'bg-white/20 text-white border border-white/10' 
+                <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center transition-all duration-300 ${
+                  isActive
+                    ? 'bg-gradient-to-r from-purple-500 to-blue-500 shadow-lg shadow-purple-500/30 text-white scale-110'
+                    : isPast
+                      ? 'bg-white/20 text-white border border-white/10'
                       : 'bg-slate-900 text-white/40 border border-white/5'
                 }`}>
                   <p.icon className="w-4 h-4" />
                 </div>
-                <span className={`text-sm font-medium transition-colors ${isActive ? 'text-white' : isPast ? 'text-white/80' : 'text-white/40'}`}>
+                <span className={`text-xs md:text-sm font-medium transition-colors ${isActive ? 'text-white' : isPast ? 'text-white/80' : 'text-white/40'}`}>
                   {p.label}
                 </span>
               </button>

@@ -295,7 +295,7 @@ export default function EnrichView() {
         </div>
         <h3 className="text-2xl font-bold mb-2">Enriching Catalog</h3>
         <p className="text-white/60 text-center mb-8">
-          Claude is generating missing conversational attributes, Q&A pairs, and agent facets...
+          Generating missing conversational attributes, Q&A pairs, and agent facets...
         </p>
         <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
           <div className="h-full bg-gradient-to-r from-purple-500 to-blue-500 transition-[width] duration-300" style={{ width: `${pct}%` }} />
@@ -324,7 +324,7 @@ export default function EnrichView() {
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-6">
         <div>
           <div className="flex items-center gap-3 mb-4">
-            <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
+            <h2 className="text-2xl md:text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
               Data Enrichment
             </h2>
             <RubricInfo />
@@ -351,7 +351,7 @@ export default function EnrichView() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-xl flex flex-col h-[680px]">
+        <div className="lg:col-span-1 bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-xl flex flex-col h-[280px] lg:h-[680px]">
           <div className="p-4 border-b border-white/10 bg-black/20">
             <h3 className="font-semibold">Products ({state.enrichedProducts.length})</h3>
           </div>
@@ -381,7 +381,7 @@ export default function EnrichView() {
         </div>
 
         {selectedProduct && (
-          <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-xl flex flex-col h-[680px]">
+          <div className="lg:col-span-3 bg-white/5 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-xl flex flex-col min-h-[600px] lg:h-[680px]">
             <div className="p-6 border-b border-white/10 flex justify-between items-center bg-black/20">
               <div>
                 <h3 className="text-xl font-bold">{selectedProduct.original_fields.name}</h3>
