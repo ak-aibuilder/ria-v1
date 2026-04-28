@@ -3,7 +3,7 @@
 import React, { useState, useRef } from 'react';
 import { useAppStore, Product } from '../lib/store';
 import { uploadCatalog } from '../lib/api';
-import { UploadCloud, FileText, AlertCircle, CheckCircle2, ArrowRight, AlertTriangle, Merge, Trash2 } from 'lucide-react';
+import { UploadCloud, FileText, AlertCircle, AlertTriangle, Merge, Trash2 } from 'lucide-react';
 
 type IngestReport = {
   rows_parsed: number;
@@ -30,7 +30,6 @@ export default function UploadView() {
   const { setProducts, setPhase } = useAppStore();
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [parsedData, setParsedData] = useState<Product[] | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [hasDuplicates, setHasDuplicates] = useState(false);
   const [duplicateCount, setDuplicateCount] = useState(0);
@@ -46,11 +45,12 @@ export default function UploadView() {
         setPendingFile(file);
         setDuplicateCount(res.report.duplicate_count);
         setHasDuplicates(true);
-        setParsedData(null);
       } else {
-        setParsedData(res.products);
+        // Clean parse — auto-advance to Audit (which kicks off scoring on mount).
         setHasDuplicates(false);
         setPendingFile(null);
+        setProducts(res.products);
+        setPhase('audit');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -76,13 +76,6 @@ export default function UploadView() {
     if (e.dataTransfer.files?.length) handleFile(e.dataTransfer.files[0]);
   };
 
-  const handleContinue = () => {
-    if (parsedData) {
-      setProducts(parsedData);
-      setPhase('audit');
-    }
-  };
-
   const handleMergeDuplicates = () => {
     if (pendingFile) sendFile(pendingFile, "merge");
   };
@@ -94,7 +87,6 @@ export default function UploadView() {
   const cancelDuplicates = () => {
     setHasDuplicates(false);
     setPendingFile(null);
-    setParsedData(null);
   };
 
   const loadSampleData = () => {
@@ -163,18 +155,18 @@ export default function UploadView() {
             </button>
           </div>
         </div>
-      ) : !parsedData ? (
+      ) : (
         <div className="space-y-6">
           <div
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => !submitting && fileInputRef.current?.click()}
             className={`relative overflow-hidden border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 ${
               isDragging
                 ? 'border-purple-500 bg-purple-500/10 shadow-[0_0_30px_rgba(168,85,247,0.2)]'
                 : 'border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/30'
-            }`}
+            } ${submitting ? 'cursor-wait' : ''}`}
           >
             <input
               type="file"
@@ -187,11 +179,15 @@ export default function UploadView() {
             />
 
             <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center">
-              <UploadCloud className={`w-10 h-10 ${isDragging ? 'text-purple-400' : 'text-white/60'}`} />
+              <UploadCloud className={`w-10 h-10 ${isDragging ? 'text-purple-400' : 'text-white/60'} ${submitting ? 'animate-pulse' : ''}`} />
             </div>
 
-            <h3 className="text-xl font-semibold mb-2">Drag & Drop your CSV here</h3>
-            <p className="text-white/50 mb-6">{submitting ? "Uploading..." : "or click to browse files"}</p>
+            <h3 className="text-xl font-semibold mb-2">
+              {submitting ? "Parsing CSV…" : "Drag & Drop your CSV here"}
+            </h3>
+            <p className="text-white/50 mb-6">
+              {submitting ? "Audit will start automatically once parsing finishes." : "or click to browse files"}
+            </p>
 
             <div className="inline-flex items-center gap-2 text-sm text-white/40 bg-black/20 px-4 py-2 rounded-full">
               <FileText className="w-4 h-4" />
@@ -213,64 +209,6 @@ export default function UploadView() {
               className="text-sm text-purple-400 hover:text-purple-300 underline underline-offset-4 transition-colors disabled:opacity-60"
             >
               Or use sample catalog data
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-8 backdrop-blur-xl shadow-2xl">
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
-                <CheckCircle2 className="w-6 h-6 text-green-400" />
-              </div>
-              <div>
-                <h3 className="text-xl font-semibold">Catalog Parsed Successfully</h3>
-                <p className="text-white/60">{parsedData.length} products ready for audit</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setParsedData(null)}
-              className="text-sm text-white/50 hover:text-white transition-colors"
-            >
-              Upload different file
-            </button>
-          </div>
-
-          <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20 mb-8">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-white/50 uppercase bg-white/5 border-b border-white/10">
-                <tr>
-                  <th className="px-6 py-4 font-medium">SKU</th>
-                  <th className="px-6 py-4 font-medium">Name</th>
-                  <th className="px-6 py-4 font-medium">Price</th>
-                  <th className="px-6 py-4 font-medium">Category</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {parsedData.slice(0, 5).map((product, idx) => (
-                  <tr key={idx} className="hover:bg-white/5 transition-colors">
-                    <td className="px-6 py-4 font-mono text-white/70">{product.sku}</td>
-                    <td className="px-6 py-4 font-medium">{product.name}</td>
-                    <td className="px-6 py-4 text-white/70">${product.price}</td>
-                    <td className="px-6 py-4 text-white/70">{product.category || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {parsedData.length > 5 && (
-              <div className="px-6 py-3 text-center text-xs text-white/40 bg-white/5 border-t border-white/10">
-                Showing 5 of {parsedData.length} products
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-end">
-            <button
-              onClick={handleContinue}
-              className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white px-8 py-3 rounded-xl font-semibold shadow-lg shadow-purple-500/25 hover:shadow-xl hover:shadow-purple-500/40 transition-all duration-300 transform hover:-translate-y-0.5"
-            >
-              Run Readiness Audit
-              <ArrowRight className="w-5 h-5" />
             </button>
           </div>
         </div>

@@ -97,3 +97,22 @@ export async function getEnrichmentProgress(): Promise<{
 }> {
   return apiFetch("/enrich/progress");
 }
+
+export type ToolCall = { name: string; args: any; result: any };
+export type AgentTranscript = {
+  index_type: "pre" | "post";
+  query_text: string;
+  tool_calls: ToolCall[];
+  agent_response: string;
+  turns_used: number;
+  terminator: string;
+  cart_preview: any[];
+  checkout_intent: any | null;
+};
+
+export async function validateQuery(query: string): Promise<{ pre: AgentTranscript; post: AgentTranscript }> {
+  return apiFetch("/validate/query", {
+    method: "POST",
+    body: JSON.stringify({ query }),
+  });
+}

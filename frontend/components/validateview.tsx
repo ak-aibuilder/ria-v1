@@ -2,26 +2,37 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppStore } from '../lib/store';
-import { Send, Bot, User, Sparkles, Code, ShoppingBag } from 'lucide-react';
+import { validateQuery, AgentTranscript, ToolCall } from '../lib/api';
+import { Send, Bot, User, Sparkles, Code, ShoppingBag, AlertTriangle, Receipt } from 'lucide-react';
 
 interface Message {
   id: string;
   role: 'user' | 'agent';
   content: string;
-  toolCalls?: { name: string; args: any; result: any }[];
+  toolCalls?: ToolCall[];
+  cartPreview?: any[];
+  checkoutIntent?: any | null;
+  meta?: { turns: number; terminator: string };
 }
+
+const SCRIPTED_QUERIES = [
+  "I need a jacket for a rainy day in size M under $200.",
+  "What would you pair with the Floral White Top for a summer wedding?",
+  "Does the Classic Varsity Top come in Medium and is it good for athletic use?",
+];
 
 export default function ValidateView() {
   const { state } = useAppStore();
   const [query, setQuery] = useState('');
   const [preMessages, setPreMessages] = useState<Message[]>([
-    { id: '1', role: 'agent', content: 'Hi! I am the baseline shopping agent using your original catalog data. How can I help you?' }
+    { id: 'p1', role: 'agent', content: 'Hi! I am the baseline shopping agent using the original (un-enriched) catalog. Ask me anything.' }
   ]);
   const [postMessages, setPostMessages] = useState<Message[]>([
-    { id: '1', role: 'agent', content: 'Hi! I am the enhanced shopping agent using the RIA-enriched catalog. How can I help you?' }
+    { id: 'q1', role: 'agent', content: 'Hi! I am the enhanced shopping agent using the RIA-enriched catalog. Ask me anything.' }
   ]);
   const [isTyping, setIsTyping] = useState(false);
-  
+  const [error, setError] = useState<string | null>(null);
+
   const preScrollRef = useRef<HTMLDivElement>(null);
   const postScrollRef = useRef<HTMLDivElement>(null);
 
@@ -30,97 +41,111 @@ export default function ValidateView() {
     if (postScrollRef.current) postScrollRef.current.scrollTop = postScrollRef.current.scrollHeight;
   }, [preMessages, postMessages]);
 
-  const scriptedQueries = [
-    "I need something durable for everyday use.",
-    "What are the care instructions for the t-shirt?",
-    "Show me items good for winter."
-  ];
+  const enrichedReady = state.enrichedProducts.length > 0;
 
-  const handleSend = (text: string) => {
-    if (!text.trim()) return;
-    
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: text };
+  const handleSend = async (text: string) => {
+    if (!text.trim() || isTyping) return;
+    if (text.trim().length < 10) {
+      setError("Query must be at least 10 characters.");
+      return;
+    }
+    setError(null);
+
+    const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: text };
     setPreMessages(prev => [...prev, userMsg]);
     setPostMessages(prev => [...prev, userMsg]);
     setQuery('');
     setIsTyping(true);
 
-    // Simulate agent responses
-    setTimeout(() => {
-      // Pre-enrichment agent (fails or gives poor answers)
-      const preResponse: Message = {
-        id: (Date.now() + 1).toString(),
+    try {
+      const res = await validateQuery(text);
+      const toMsg = (t: AgentTranscript, suffix: string): Message => ({
+        id: `${suffix}-${Date.now()}`,
         role: 'agent',
-        content: "I'm sorry, I couldn't find specific information about that in the product descriptions. I can only see basic names and prices.",
-        toolCalls: [
-          { name: 'search_products', args: { query: text }, result: { matches: 0 } }
-        ]
-      };
-
-      // Post-enrichment agent (succeeds using enriched facets and Q&A)
-      let postContent = "Based on our catalog, I found some great options for you!";
-      let toolResult = { matches: 2, items: state.enrichedProducts.slice(0, 2).map(p => p.original_fields.name) };
-
-      if (text.includes("durable") || text.includes("everyday")) {
-        postContent = `Yes! The ${state.enrichedProducts[0]?.original_fields.name || 'product'} is specifically designed for everyday use and has high durability, according to its specifications.`;
-      } else if (text.includes("care")) {
-        postContent = "For care instructions, we recommend standard care procedures. Please check the label for specific details.";
-      }
-
-      const postResponse: Message = {
-        id: (Date.now() + 2).toString(),
-        role: 'agent',
-        content: postContent,
-        toolCalls: [
-          { name: 'search_products', args: { query: text, use_facets: true }, result: toolResult }
-        ]
-      };
-
-      setPreMessages(prev => [...prev, preResponse]);
-      setPostMessages(prev => [...prev, postResponse]);
+        content: t.agent_response,
+        toolCalls: t.tool_calls,
+        cartPreview: t.cart_preview,
+        checkoutIntent: t.checkout_intent,
+        meta: { turns: t.turns_used, terminator: t.terminator },
+      });
+      setPreMessages(prev => [...prev, toMsg(res.pre, 'pre')]);
+      setPostMessages(prev => [...prev, toMsg(res.post, 'post')]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Agent run failed");
+    } finally {
       setIsTyping(false);
-    }, 1500);
+    }
   };
 
-  const MessageBubble = ({ msg, isEnhanced }: { msg: Message, isEnhanced: boolean }) => (
+  const MessageBubble = ({ msg, isEnhanced }: { msg: Message; isEnhanced: boolean }) => (
     <div className={`flex gap-3 mb-6 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
       <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-        msg.role === 'user' 
-          ? 'bg-white/10' 
-          : isEnhanced 
-            ? 'bg-gradient-to-br from-purple-500 to-blue-500' 
+        msg.role === 'user'
+          ? 'bg-white/10'
+          : isEnhanced
+            ? 'bg-gradient-to-br from-purple-500 to-blue-500'
             : 'bg-slate-700'
       }`}>
         {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-white" />}
       </div>
-      
-      <div className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} max-w-[80%]`}>
-        <div className={`px-4 py-3 rounded-2xl text-sm ${
-          msg.role === 'user' 
-            ? 'bg-white/10 text-white rounded-tr-sm' 
+
+      <div className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} max-w-[85%] w-full`}>
+        <div className={`px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${
+          msg.role === 'user'
+            ? 'bg-white/10 text-white rounded-tr-sm'
             : isEnhanced
               ? 'bg-purple-500/10 border border-purple-500/20 text-white rounded-tl-sm'
               : 'bg-black/30 border border-white/5 text-white/80 rounded-tl-sm'
         }`}>
           {msg.content}
         </div>
-        
-        {msg.toolCalls && (
-          <div className="mt-2 w-full">
-            {msg.toolCalls.map((tool, idx) => (
-              <div key={idx} className="bg-black/40 border border-white/5 rounded-lg p-2 text-xs font-mono text-white/50 mt-1">
-                <div className="flex items-center gap-1 text-blue-400 mb-1">
-                  <Code className="w-3 h-3" /> {tool.name}()
-                </div>
-                <div className="pl-4 border-l border-white/10">
-                  <div>Args: {JSON.stringify(tool.args)}</div>
-                  <div className={tool.result.matches === 0 ? 'text-red-400/70' : 'text-green-400/70'}>
-                    Result: {JSON.stringify(tool.result)}
+
+        {msg.meta && (
+          <div className="mt-1 text-[10px] font-mono text-white/40">
+            {msg.meta.turns} turn{msg.meta.turns === 1 ? '' : 's'} · {msg.meta.terminator}
+          </div>
+        )}
+
+        {msg.toolCalls && msg.toolCalls.length > 0 && (
+          <div className="mt-2 w-full space-y-1">
+            {msg.toolCalls.map((tool, idx) => {
+              const result = tool.result || {};
+              const failure = result.error || result.status === 'sku_not_found' || result.status === 'invalid_variant' || (typeof result.result_count === 'number' && result.result_count === 0);
+              return (
+                <div key={idx} className="bg-black/40 border border-white/5 rounded-lg p-2 text-xs font-mono text-white/50">
+                  <div className="flex items-center gap-1 text-blue-400 mb-1">
+                    <Code className="w-3 h-3" /> {tool.name}()
+                  </div>
+                  <div className="pl-4 border-l border-white/10 break-words">
+                    <div className="text-white/40">args: {JSON.stringify(tool.args)}</div>
+                    <div className={failure ? 'text-red-400/70' : 'text-green-400/70'}>
+                      result: {summarizeResult(tool.name, result)}
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        )}
+
+        {msg.cartPreview && msg.cartPreview.length > 0 && (
+          <div className="mt-2 w-full p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 text-xs">
+            <div className="flex items-center gap-1 mb-1 font-semibold"><ShoppingBag className="w-3 h-3" /> Cart</div>
+            {msg.cartPreview.map((c: any) => (
+              <div key={c.cart_item_id} className="font-mono">
+                {c.quantity}× {c.sku} {c.variant?.size ? `(size ${c.variant.size})` : ''} — ${c.unit_price}
               </div>
             ))}
           </div>
+        )}
+
+        {msg.checkoutIntent && (
+          <details className="mt-2 w-full p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-100 text-xs">
+            <summary className="flex items-center gap-1 cursor-pointer font-semibold">
+              <Receipt className="w-3 h-3" /> CheckoutIntent (acp/0.1)
+            </summary>
+            <pre className="mt-2 overflow-x-auto text-[10px] leading-relaxed">{JSON.stringify(msg.checkoutIntent, null, 2)}</pre>
+          </details>
         )}
       </div>
     </div>
@@ -128,32 +153,42 @@ export default function ValidateView() {
 
   return (
     <div className="max-w-7xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 h-[calc(100vh-200px)] flex flex-col">
-      <div className="text-center mb-8 flex-shrink-0">
-        <h2 className="text-4xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
+      <div className="text-center mb-6 flex-shrink-0">
+        <h2 className="text-4xl font-bold mb-3 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-400">
           Agent Validation Demo
         </h2>
         <p className="text-lg text-white/70 max-w-2xl mx-auto">
-          See the difference. The agent on the left uses your original catalog. The agent on the right uses the RIA-enriched catalog.
+          Same Claude tool-use agent on both sides. Left runs against the un-enriched catalog; right runs against the RIA-enriched catalog.
         </p>
       </div>
 
-      {/* Scripted Queries */}
-      <div className="flex flex-wrap justify-center gap-3 mb-6 flex-shrink-0">
-        {scriptedQueries.map((q, idx) => (
+      {!enrichedReady && (
+        <div className="max-w-md mx-auto mb-6 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 text-sm flex items-center gap-3">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          Run enrichment first — the agent compares pre vs post enrichment side-by-side.
+        </div>
+      )}
+
+      <div className="flex flex-wrap justify-center gap-3 mb-4 flex-shrink-0">
+        {SCRIPTED_QUERIES.map((q, idx) => (
           <button
             key={idx}
             onClick={() => handleSend(q)}
-            disabled={isTyping}
+            disabled={isTyping || !enrichedReady}
             className="px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 text-sm transition-colors disabled:opacity-50"
           >
-            "{q}"
+            “{q}”
           </button>
         ))}
       </div>
 
-      {/* Chat Interfaces */}
+      {error && (
+        <div className="max-w-md mx-auto mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" /> {error}
+        </div>
+      )}
+
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 min-h-0">
-        {/* Pre-Enrichment Chat */}
         <div className="flex flex-col bg-black/20 border border-white/10 rounded-2xl overflow-hidden backdrop-blur-xl">
           <div className="p-4 border-b border-white/10 bg-white/5 flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-red-500" />
@@ -161,20 +196,10 @@ export default function ValidateView() {
           </div>
           <div ref={preScrollRef} className="flex-1 overflow-y-auto p-6">
             {preMessages.map(msg => <MessageBubble key={msg.id} msg={msg} isEnhanced={false} />)}
-            {isTyping && (
-              <div className="flex gap-3 mb-6">
-                <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center"><Bot className="w-4 h-4 text-white" /></div>
-                <div className="px-4 py-3 rounded-2xl bg-black/30 border border-white/5 rounded-tl-sm flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                  <div className="w-1.5 h-1.5 bg-white/40 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
-                </div>
-              </div>
-            )}
+            {isTyping && <Typing isEnhanced={false} />}
           </div>
         </div>
 
-        {/* Post-Enrichment Chat */}
         <div className="flex flex-col bg-purple-900/10 border border-purple-500/20 rounded-2xl overflow-hidden backdrop-blur-xl shadow-[0_0_30px_rgba(168,85,247,0.1)]">
           <div className="p-4 border-b border-purple-500/20 bg-purple-500/10 flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]" />
@@ -185,37 +210,24 @@ export default function ValidateView() {
           </div>
           <div ref={postScrollRef} className="flex-1 overflow-y-auto p-6">
             {postMessages.map(msg => <MessageBubble key={msg.id} msg={msg} isEnhanced={true} />)}
-            {isTyping && (
-              <div className="flex gap-3 mb-6">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center"><Bot className="w-4 h-4 text-white" /></div>
-                <div className="px-4 py-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 rounded-tl-sm flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                  <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
-                </div>
-              </div>
-            )}
+            {isTyping && <Typing isEnhanced={true} />}
           </div>
         </div>
       </div>
 
-      {/* Input Area */}
-      <div className="mt-6 flex-shrink-0">
-        <form 
-          onSubmit={(e) => { e.preventDefault(); handleSend(query); }}
-          className="relative max-w-3xl mx-auto"
-        >
+      <div className="mt-4 flex-shrink-0">
+        <form onSubmit={(e) => { e.preventDefault(); handleSend(query); }} className="relative max-w-3xl mx-auto">
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask the shopping agents a question..."
+            placeholder="Ask the shopping agents a question (≥10 chars)…"
             className="w-full bg-white/5 border border-white/10 rounded-full pl-6 pr-14 py-4 text-white placeholder:text-white/30 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 transition-all backdrop-blur-xl"
-            disabled={isTyping}
+            disabled={isTyping || !enrichedReady}
           />
           <button
             type="submit"
-            disabled={!query.trim() || isTyping}
+            disabled={!query.trim() || isTyping || !enrichedReady}
             className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 flex items-center justify-center text-white disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 transition-transform"
           >
             <Send className="w-4 h-4 ml-0.5" />
@@ -226,3 +238,35 @@ export default function ValidateView() {
   );
 }
 
+function Typing({ isEnhanced }: { isEnhanced: boolean }) {
+  return (
+    <div className="flex gap-3 mb-6">
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isEnhanced ? 'bg-gradient-to-br from-purple-500 to-blue-500' : 'bg-slate-700'}`}>
+        <Bot className="w-4 h-4 text-white" />
+      </div>
+      <div className={`px-4 py-3 rounded-2xl flex items-center gap-1 rounded-tl-sm ${isEnhanced ? 'bg-purple-500/10 border border-purple-500/20' : 'bg-black/30 border border-white/5'}`}>
+        <div className={`w-1.5 h-1.5 rounded-full animate-bounce ${isEnhanced ? 'bg-purple-400' : 'bg-white/40'}`} />
+        <div className={`w-1.5 h-1.5 rounded-full animate-bounce ${isEnhanced ? 'bg-purple-400' : 'bg-white/40'}`} style={{ animationDelay: '0.15s' }} />
+        <div className={`w-1.5 h-1.5 rounded-full animate-bounce ${isEnhanced ? 'bg-purple-400' : 'bg-white/40'}`} style={{ animationDelay: '0.3s' }} />
+      </div>
+    </div>
+  );
+}
+
+function summarizeResult(toolName: string, result: any): string {
+  if (!result || typeof result !== 'object') return JSON.stringify(result);
+  if (toolName === 'search_products') {
+    const matches = result.matches || [];
+    if (!matches.length) return `0 matches`;
+    return `${matches.length} match(es): ${matches.slice(0, 3).map((m: any) => m.sku).join(', ')}${matches.length > 3 ? '…' : ''}`;
+  }
+  if (toolName === 'get_product_details') {
+    return result.error ? `error: ${result.error}` : `sku=${result.sku} name=${result.name}`;
+  }
+  if (toolName === 'add_to_cart') {
+    return result.status === 'added'
+      ? `added cart_item_id=${result.cart_item_id}`
+      : `${result.status}${result.reason ? ` (${result.reason})` : ''}`;
+  }
+  return JSON.stringify(result).slice(0, 200);
+}

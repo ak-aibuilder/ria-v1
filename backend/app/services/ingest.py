@@ -114,10 +114,15 @@ def _populated_field_count(row: dict) -> int:
     return sum(1 for v in row.values() if v not in (None, "", [], {}))
 
 
+_OPTION_RE = re.compile(r"^option(\d+)_(name|value)$")
+
+
 def parse_csv_bytes(raw: bytes) -> tuple[list[dict], dict[str, str]]:
     """Permissive CSV parse + alias normalization.
 
-    Returns (rows_as_canonical_dicts, alias_mapping_used).
+    Also picks up Shopify-style `Option{N} Name / Option{N} Value` pairs and
+    materializes them as `attributes` so size/color variants from variant rows
+    survive into the final product. Returns (rows, alias_mapping_used).
     """
     text = raw.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text), skipinitialspace=True)
@@ -126,15 +131,42 @@ def parse_csv_bytes(raw: bytes) -> tuple[list[dict], dict[str, str]]:
 
     alias_mapping: dict[str, str] = {}
     canonical_for: dict[str, str] = {}
+    # n -> {"name_header": "Option1 Name", "value_header": "Option1 Value"}
+    option_headers: dict[int, dict[str, str]] = {}
+
     for header in reader.fieldnames:
-        canon = ALIAS_MAP.get(_snake(header))
+        snake = _snake(header)
+        canon = ALIAS_MAP.get(snake)
         if canon:
             alias_mapping[header] = canon
             canonical_for[header] = canon
+            continue
+        m = _OPTION_RE.match(snake or "")
+        if m:
+            n = int(m.group(1))
+            slot = option_headers.setdefault(n, {})
+            slot[f"{m.group(2)}_header"] = header
+
+    all_rows = list(reader)
+
+    # First pass: figure out the canonical attribute name for each option slot
+    # (e.g. n=1 -> "size") by scanning every row for the first non-empty Name.
+    option_names: dict[int, str] = {}
+    for n, refs in option_headers.items():
+        name_header = refs.get("name_header")
+        if not name_header:
+            continue
+        for raw_row in all_rows:
+            raw_name = (raw_row.get(name_header) or "").strip()
+            if raw_name and raw_name.lower() != "title":
+                option_names[n] = raw_name.lower().replace(" ", "_")
+                break
 
     rows: list[dict] = []
-    for raw_row in reader:
+    for raw_row in all_rows:
         row: dict = {}
+        attrs: dict[str, list[str]] = {}
+
         for header, value in raw_row.items():
             canon = canonical_for.get(header)
             if not canon:
@@ -143,8 +175,24 @@ def parse_csv_bytes(raw: bytes) -> tuple[list[dict], dict[str, str]]:
             if not v:
                 continue
             row[canon] = v
+
+        for n, refs in option_headers.items():
+            value_header = refs.get("value_header")
+            if not value_header:
+                continue
+            raw_value = (raw_row.get(value_header) or "").strip()
+            if not raw_value or raw_value.lower() == "default title":
+                continue
+            key = option_names.get(n, f"option{n}")
+            bucket = attrs.setdefault(key, [])
+            if raw_value not in bucket:
+                bucket.append(raw_value)
+
+        if attrs:
+            row["attributes"] = attrs
         if row:
             rows.append(row)
+
     return rows, alias_mapping
 
 
@@ -159,6 +207,18 @@ def normalize_rows(rows: list[dict]) -> tuple[list[dict], int]:
         if not sku or not name or price is None or price <= 0:
             dropped += 1
             continue
+        attributes = row.get("attributes")
+        if isinstance(attributes, dict):
+            # Collapse single-element lists down to scalars for cleaner downstream use.
+            attributes = {
+                k: (v[0] if isinstance(v, list) and len(v) == 1 else v)
+                for k, v in attributes.items()
+            }
+        elif isinstance(attributes, str):
+            attributes = {"raw": attributes}
+        else:
+            attributes = {}
+
         product = {
             "sku": sku,
             "name": name,
@@ -167,25 +227,43 @@ def normalize_rows(rows: list[dict]) -> tuple[list[dict], int]:
             "category": row.get("category"),
             "image_urls": _coerce_image_urls(row.get("image_urls")),
             "brand": row.get("brand"),
-            "attributes": {},
+            "attributes": attributes,
             "q_and_a": None,
             "raw_review_data": None,
             "relationship_type": None,
             "agent_facets": None,
         }
-        if "attributes" in row:
-            product["attributes"] = {"raw": row["attributes"]}
         kept.append(product)
     return kept, dropped
 
 
 def _merge_pair(a: dict, b: dict) -> dict:
-    """Merge b into a: prefer the value with more populated fields per field."""
+    """Merge b into a: prefer the value with more populated fields per field.
+
+    Special-case `attributes`: union the per-key lists so variant rows for the
+    same SKU contribute their option values (e.g. size: [Small,Medium,Large]).
+    """
     out = dict(a)
     for k, v in b.items():
         if v in (None, "", [], {}):
             continue
         existing = out.get(k)
+        if k == "attributes" and isinstance(v, dict):
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            for ak, av in v.items():
+                if isinstance(av, list):
+                    bucket = merged.get(ak)
+                    if not isinstance(bucket, list):
+                        bucket = [bucket] if bucket not in (None, "") else []
+                    for item in av:
+                        if item not in bucket:
+                            bucket.append(item)
+                    merged[ak] = bucket
+                else:
+                    if not merged.get(ak):
+                        merged[ak] = av
+            out[k] = merged
+            continue
         if existing in (None, "", [], {}):
             out[k] = v
         elif k == "description" and isinstance(existing, str) and isinstance(v, str) and v not in existing:
@@ -193,28 +271,35 @@ def _merge_pair(a: dict, b: dict) -> dict:
     return out
 
 
-def dedupe_products(
-    products: list[dict], strategy: DedupeStrategy
+def _dedupe_rows(
+    rows: list[dict], strategy: DedupeStrategy
 ) -> tuple[list[dict], int]:
-    """Return (deduped, duplicate_count). Strategy:
+    """Dedupe by SKU on raw rows (post-parse, pre-normalize). Returns (rows, duplicate_count).
 
-    - "first": keep first row per SKU.
-    - "merge": merge fields per SKU, keeping the most-populated values.
-    - "detect": no dedupe; just count.
+    Operating on raw rows lets us catch Shopify-style variant rows where the
+    parent carries Title/Description and follow-up rows only carry option
+    values + price. Strategies:
+
+    - "first":  keep the first row that carries a SKU.
+    - "merge":  start from the most-populated row per SKU, fill in missing
+                fields from siblings (descriptions are concatenated).
+    - "detect": no dedupe; just count colliding SKUs.
     """
     by_sku: dict[str, list[dict]] = {}
     order: list[str] = []
-    for p in products:
-        sku = p["sku"]
+    for row in rows:
+        sku = row.get("sku")
+        if not sku:
+            continue
         if sku not in by_sku:
             by_sku[sku] = []
             order.append(sku)
-        by_sku[sku].append(p)
+        by_sku[sku].append(row)
 
     duplicate_skus = sum(1 for v in by_sku.values() if len(v) > 1)
 
     if strategy == "detect":
-        return products, duplicate_skus
+        return rows, duplicate_skus
 
     deduped: list[dict] = []
     if strategy == "first":
@@ -235,6 +320,10 @@ def dedupe_products(
     return deduped, duplicate_skus
 
 
+# Backwards-compatible name kept for any external callers / tests.
+dedupe_products = _dedupe_rows
+
+
 def ingest(raw_csv: bytes, strategy: DedupeStrategy = "merge") -> IngestResult:
     rows, alias_mapping = parse_csv_bytes(raw_csv)
     missing = [c for c in REQUIRED_FIELDS if c not in set(alias_mapping.values())]
@@ -247,8 +336,8 @@ def ingest(raw_csv: bytes, strategy: DedupeStrategy = "merge") -> IngestResult:
         )
         return IngestResult(products=[], report=report)
 
-    normalized, dropped = normalize_rows(rows)
-    deduped, duplicate_count = dedupe_products(normalized, strategy)
+    deduped_rows, duplicate_count = _dedupe_rows(rows, strategy)
+    normalized, dropped = normalize_rows(deduped_rows)
     report = ValidationReport(
         rows_parsed=len(rows),
         rows_dropped=dropped,
@@ -256,4 +345,6 @@ def ingest(raw_csv: bytes, strategy: DedupeStrategy = "merge") -> IngestResult:
         alias_mapping=alias_mapping,
     )
     needs_dedupe = strategy == "detect" and duplicate_count > 0
-    return IngestResult(products=deduped, report=report, needs_dedupe=needs_dedupe)
+    # On detect, return the normalized rows for preview only — they are NOT
+    # persisted (frontend re-sends with merge|first to actually commit).
+    return IngestResult(products=normalized, report=report, needs_dedupe=needs_dedupe)

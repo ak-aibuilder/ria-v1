@@ -58,6 +58,7 @@ async def reset_session(
 ) -> dict:
     await db.products.delete_many({"session_id": user.session_id})
     await db.transcripts.delete_many({"session_id": user.session_id})
+    await db.agent_chats.delete_many({"session_id": user.session_id})
     await db.sessions.update_one(
         {"_id": user.session_id},
         {"$set": {"phase": "upload", "last_activity": datetime.now(timezone.utc)}},

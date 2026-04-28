@@ -7,8 +7,55 @@ Per PDF section 3.4:
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
+
+# Deterministic vocab for fall-back color/material extraction from name/desc.
+# Catches obvious cases Claude sometimes misses (e.g. "Black Leather Bag" →
+# color=black, material=leather). Only single-word, unambiguous tokens.
+_COLOR_WORDS = {
+    "black", "white", "red", "blue", "navy", "green", "yellow", "pink",
+    "purple", "orange", "brown", "grey", "gray", "beige", "ivory", "tan",
+    "gold", "silver", "olive", "maroon", "teal", "cream", "khaki",
+    "burgundy", "charcoal",
+}
+_MATERIAL_WORDS = {
+    "leather", "silk", "wool", "cotton", "denim", "linen", "cashmere",
+    "polyester", "nylon", "fleece", "down", "satin", "suede", "velvet",
+    "spandex", "lycra",
+}
+_TOKEN_RE = re.compile(r"[a-z]+")
+
+# Phrase → controlled-vocab value mappings. Phrase match is substring on the
+# lowercased name+description so multi-word terms like "water-resistant" work.
+_WEATHER_PHRASES: list[tuple[str, str]] = [
+    ("waterproof", "rain"), ("water-resistant", "rain"), ("water-repellent", "rain"),
+    ("water repellent", "rain"), ("rain-ready", "rain"), ("rainproof", "rain"),
+    ("rainy", "rain"), ("rain ", "rain"),
+    ("snow", "snow"), ("snowy", "snow"),
+    ("winter", "cold"), ("thermal", "cold"), ("fleece", "cold"), ("wool", "cold"),
+    ("down-filled", "cold"), ("parka", "cold"), ("insulated", "cold"),
+    ("heavy", "cool"),
+    ("summer", "hot"), ("lightweight", "warm"), ("breathable", "warm"),
+    ("linen", "warm"), ("tank", "hot"), ("shorts", "hot"),
+]
+_OCCASION_PHRASES: list[tuple[str, str]] = [
+    ("tuxedo", "formal"), ("tux", "formal"), ("gown", "formal"),
+    ("blazer", "work"), ("suit ", "work"),
+    ("wedding", "wedding"), ("bridal", "wedding"),
+    ("athletic", "athletic"), ("sporty", "athletic"), ("sport", "athletic"),
+    ("running", "athletic"), ("yoga", "athletic"), ("gym", "athletic"),
+    ("loungewear", "loungewear"), ("pajama", "loungewear"), ("sleep", "loungewear"),
+    ("vacation", "vacation"), ("beach", "vacation"), ("travel", "vacation"),
+    ("casual", "casual"), ("everyday", "casual"), ("daily", "casual"),
+]
+_SEASON_PHRASES: list[tuple[str, str]] = [
+    ("spring", "spring"),
+    ("summer", "summer"),
+    ("fall", "fall"), ("autumn", "fall"),
+    ("winter", "winter"),
+]
 
 FACET_VOCAB: dict[str, set[str]] = {
     "occasion": {"casual", "work", "formal", "athletic", "loungewear", "wedding", "vacation"},
@@ -17,6 +64,9 @@ FACET_VOCAB: dict[str, set[str]] = {
     "care": {"machine_wash", "hand_wash", "dry_clean"},
     "season": {"spring", "summer", "fall", "winter"},
     "price_band": {"under_50", "50_100", "100_200", "200_plus"},
+    # Taxonomic — open vocab; coerce only normalizes case/whitespace.
+    "color": set(),
+    "material": set(),
 }
 
 
@@ -24,8 +74,69 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _extract_deterministic_facets(product: dict) -> dict[str, Any]:
+    """Mine name + description for unambiguous facet signals.
+
+    Returns a dict whose values are scalars (color, material) OR lists
+    (weather, occasion, season). The caller unions list values with anything
+    Claude already produced — both sources contribute, neither overrides.
+    """
+    haystack = " ".join(
+        str(x or "") for x in (product.get("name"), product.get("description"))
+    ).lower()
+    if not haystack:
+        return {}
+    tokens = set(_TOKEN_RE.findall(haystack))
+    out: dict[str, Any] = {}
+
+    color_hits = sorted(tokens & _COLOR_WORDS)
+    if color_hits:
+        out["color"] = color_hits[0]
+    material_hits = sorted(tokens & _MATERIAL_WORDS)
+    if material_hits:
+        out["material"] = material_hits[0]
+
+    def collect(phrases: list[tuple[str, str]]) -> list[str]:
+        seen = []
+        for phrase, value in phrases:
+            if phrase in haystack and value not in seen:
+                seen.append(value)
+        return seen
+
+    weather = collect(_WEATHER_PHRASES)
+    if weather:
+        out["weather"] = weather
+    occasion = collect(_OCCASION_PHRASES)
+    if occasion:
+        out["occasion"] = occasion
+    season = collect(_SEASON_PHRASES)
+    if season:
+        out["season"] = season
+
+    return out
+
+
+def _union_facet(existing: Any, addition: Any) -> Any:
+    """Merge a new facet value into an existing one, preferring union for lists."""
+    if existing in (None, "", [], {}):
+        return addition
+    if isinstance(existing, list) or isinstance(addition, list):
+        ex_list = list(existing) if isinstance(existing, list) else [existing]
+        add_list = list(addition) if isinstance(addition, list) else [addition]
+        for item in add_list:
+            if item not in ex_list:
+                ex_list.append(item)
+        return ex_list
+    return existing  # scalar already set — keep Claude's value
+
+
 def _coerce_facets(raw: Any) -> dict[str, Any]:
-    """Filter facets against controlled vocab. Discard unknown keys/values."""
+    """Filter facets against controlled vocab. Discard unknown keys/values.
+
+    Closed-vocab keys (occasion/weather/fit/care/season/price_band) are
+    enforced strictly. Open-vocab keys (color/material) accept any
+    short-string value and are lower-cased for index consistency.
+    """
     if not isinstance(raw, dict):
         return {}
     out: dict[str, Any] = {}
@@ -33,12 +144,19 @@ def _coerce_facets(raw: Any) -> dict[str, Any]:
         if key not in FACET_VOCAB:
             continue
         allowed = FACET_VOCAB[key]
+        is_open = len(allowed) == 0
         if isinstance(value, list):
-            cleaned = [v for v in value if isinstance(v, str) and v in allowed]
+            cleaned = [
+                v.lower().strip()
+                for v in value
+                if isinstance(v, str) and v.strip() and (is_open or v in allowed)
+            ]
             if cleaned:
                 out[key] = cleaned
-        elif isinstance(value, str) and value in allowed:
-            out[key] = value
+        elif isinstance(value, str) and value.strip():
+            v = value.strip()
+            if is_open or v in allowed:
+                out[key] = v.lower() if is_open else v
     return out
 
 
@@ -177,6 +295,23 @@ def merge_enrichments(
                     "confidence": 0.88,
                     "ts": _now().isoformat(),
                 }
+
+    # Deterministic top-up: ensure obvious tokens from name/description make
+    # it into agent_facets even when Claude misses them. Scalar facets
+    # (color/material) only fill gaps; list facets (weather/occasion/season)
+    # are unioned with Claude's so both signals contribute.
+    det = _extract_deterministic_facets(product)
+    if det:
+        before = dict(enriched.get("agent_facets") or {})
+        facets = dict(before)
+        for k, v in det.items():
+            facets[k] = _union_facet(facets.get(k), v)
+        if facets != before:
+            enriched["agent_facets"] = facets
+            enriched_provenance.setdefault(
+                "agent_facets",
+                {"by": "deterministic+ria_enriched", "confidence": 0.9, "ts": _now().isoformat()},
+            )
 
     out = dict(product)
     out["enriched"] = enriched or None
